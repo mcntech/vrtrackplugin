@@ -201,17 +201,20 @@ class track
             p2_RB = ((2 * tempRB) - (2 * tempRC * m_cos23)); 
             p2_RC = ((2 * tempRC) - (2 * tempRB * m_cos23)); 
             p3_RA = ((2 * tempRA) - (2 * tempRC * m_cos13)); 
-            p3_RB = 0; p3_RC = ((2 * tempRC) - (2 * tempRA * m_cos13));
+            p3_RB = 0; 
+			p3_RC = ((2 * tempRC) - (2 * tempRA * m_cos13));
             float sm1_const, sm2_const, sm3_const; 
             float sm1_RA, sm1_RB, sm1_RC; sm1_RA = p1_RA; 
-            sm1_RB = p1_RB; sm1_RC = p1_RC; 
+            sm1_RB = p1_RB; 
+			sm1_RC = p1_RC; 
             sm1_const = (-tempRA * p1_RA) + (-tempRB * p1_RB) + (-tempRC * p1_RC);
             float sm2_RA, sm2_RB, sm2_RC; 
             sm2_RA = p2_RA; sm2_RB = p2_RB; 
             sm2_RC = p2_RC; sm2_const = (-tempRA * p2_RA) + (-tempRB * p2_RB) + (-tempRC * p2_RC);
             float sm3_RA, sm3_RB, sm3_RC; 
             sm3_RA = p3_RA; sm3_RB = p3_RB; 
-            sm3_RC = p3_RC; sm3_const = (-tempRA * p3_RA) + (-tempRB * p3_RB) + (-tempRC * p3_RC);
+            sm3_RC = p3_RC; 
+			sm3_const = (-tempRA * p3_RA) + (-tempRB * p3_RB) + (-tempRC * p3_RC);
             
             Matrix4x4 matrixA;// = Matrix4x4.identity; 
             matrixA[0][0] = sm1_RA; 
@@ -226,7 +229,9 @@ class track
             matrixA[2, 2] = sm3_RC;
             Matrix4x4 matrixB = Matrix4x4.zero;
 
-            matrixB[0, 3] = (gRA - sm1_const); matrixB[1, 3] = (gRB - sm2_const); matrixB[2, 3] = (gRC - sm3_const);
+            matrixB[0, 3] = (gRA - sm1_const); 
+			matrixB[1, 3] = (gRB - sm2_const); 
+			matrixB[2, 3] = (gRC - sm3_const);
             Matrix4x4 solution = matrixA.inverse * matrixB;
 
             if (tempRA == solution[0, 3] && tempRB == solution[1, 3] && tempRC == solution[2, 3]) { 
@@ -283,10 +288,13 @@ class track
             print("gRC: " + gRC);
             float p1_RA, p1_RB, p1_RC;
             float p2_RA, p2_RB, p2_RC;
-            float p3_RA, p3_RB, p3_RC; p1_RA = ((2 * tempRA) - (2 * tempRB * m_cos12)); p1_RB = ((2 * tempRB) - (2 * tempRA * m_cos12)); p1_RC = 0; print(lineNumber + " Jacobian1: " + p1_RA + " + " + p1_RB + " + " + p1_RC);
+            float p3_RA, p3_RB, p3_RC; 
+			p1_RA = ((2 * tempRA) - (2 * tempRB * m_cos12)); 
+			p1_RB = ((2 * tempRB) - (2 * tempRA * m_cos12)); p1_RC = 0; print(lineNumber + " Jacobian1: " + p1_RA + " + " + p1_RB + " + " + p1_RC);
             lineNumber++;
             p2_RA = 0; p2_RB = ((2 * tempRB) - (2 * tempRC * m_cos23)); p2_RC = ((2 * tempRC) - (2 * tempRB * m_cos23));
-            print(lineNumber + " Jacobian2: " + p2_RA + " + " + p2_RB + " + " + p2_RC); lineNumber++; p3_RA = ((2 * tempRA) - (2 * tempRC * m_cos13));
+            print(lineNumber + " Jacobian2: " + p2_RA + " + " + p2_RB + " + " + p2_RC); 
+			lineNumber++; p3_RA = ((2 * tempRA) - (2 * tempRC * m_cos13));
             p3_RB = 0; p3_RC = ((2 * tempRC) - (2 * tempRA * m_cos13)); print(lineNumber + " Jacobian3: " + p3_RA + " + " + p3_RB + " + " + p3_RC);
             lineNumber++;
             // Now it's time to create the submatrix and solve it with the jacobian method. 
