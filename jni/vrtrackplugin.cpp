@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #endif
+#include "vrtrackplugin.h"
 
 #define MAX_UDP_RCV_LEN 1500
 class CTracking
@@ -25,11 +26,11 @@ public:
 	DWORD   dwThreadId;
 	HANDLE  hThread;
 #else
-	pthread_t thread;
+	pthread_t hThread;
 #endif
+	int m_fRun;
 	glm::vec3 newPos;
 	glm::vec3 startPos;
-	int lineNumber;
 
 	int sockfd;
 	int remote_portno;
@@ -41,21 +42,8 @@ public:
 	int serverlen;
 	char buf[MAX_UDP_RCV_LEN];
 
-	float m_RawB1, m_RawB2, m_RawB3;
-	float m_Rawtheta1, m_Rawtheta2, m_Rawtheta3;
-
-	float m_B1, m_B2, m_B3;
-	float m_theta1, m_theta2, m_theta3;
-	float m_cos12, m_cos13, m_cos23;
-
-	// TODO: Fill the values
-	float m_RA, m_RB, m_RC;
-
 	float period;
-	bool anglesReady;
-	bool altitudeReady;
-	bool azthmusReady;
-	bool firstPosition;
+
 	float A_offsetX, A_offsetY, A_offsetZ;
 
     CTracking()
@@ -63,41 +51,22 @@ public:
 		newPos = glm::vec3(0);
 		startPos = glm::vec3(0);
 
-		lineNumber = 1;
-
-		m_RA = 1, m_RB = 1, m_RC = 1;
-
 		A_offsetX = 0.0;
 		A_offsetY = 0.0;
 		A_offsetZ = 0.0;
 
 		period = 1111122;
-	
-		firstPosition = false;
 		remote_portno = 0;
 		local_portno = 59427;
 		memset(&serveraddr, 0x00, sizeof(serveraddr));
 		memset(&myaddr, 0x00, sizeof(myaddr));
-		clearPosState();
 	}
-	void clearPosState()
-	{
-		anglesReady = false;
-		altitudeReady = false;
-		azthmusReady = false;
 
-		m_RawB1 = m_RawB2 = m_RawB3 = 0;
-		m_Rawtheta1 = m_Rawtheta2 = m_Rawtheta3 = 0;
-
-		m_B1 = m_B2 = m_B3 = 0;
-		m_theta1 = m_theta2 = m_theta3 = 0;
-
-	}
 	// Use this for initialization
-	void Start() {
+	int Start() {
 		sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 		if (sockfd < 0) {
-			//error("ERROR opening socket");
+			return -2;
 		}
 		serveraddr.sin_family = AF_INET;
 		serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -110,17 +79,19 @@ public:
 
 		if (bind(sockfd, (struct sockaddr *)&myaddr, sizeof(myaddr)) < 0) {
 			printf("bind failed");
-			return;
+			return -3;
 		}
 		//startPos = this.transform.position; //test();
 		printf("Client Started");
+		m_fRun = 1;
 #ifdef WIN32
 	hThread = CreateThread( NULL, 0, ReceiveData, this, 0, &dwThreadId);
 #else
-		if (pthread_create(&thread, NULL, ReceiveData, NULL)) {
+		if (pthread_create(&hThread, NULL, ReceiveData, NULL)) {
 
 		}
 #endif
+		return 0;
 	}
 
     int getData(char *data, int nLen)
@@ -128,6 +99,7 @@ public:
     	int bytesRecvd = recvfrom(sockfd, data, nLen, 0, (sockaddr*)&serveraddr, &serverlen);
     	return bytesRecvd;
     }
+
 #ifdef WIN32
 static DWORD WINAPI ReceiveData( LPVOID pArg )
 #else
@@ -136,7 +108,13 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
 {
 		CTracking *pTracking = (CTracking*) pArg;
 		char data[256];
-		while (true) {
+		glm::vec4 vecDist(2.5, 3, 4, 0x00);
+		bool altitudeReady = false;
+		bool azthmusReady = false;
+		glm::vec4 vecTheta;
+		glm::vec4 vecBeta;
+
+		while (pTracking->m_fRun) {
 			int n = pTracking->getData(data, 256);
 			if (n < 0) {
 #ifdef WIN32
@@ -149,14 +127,23 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
 				printf("Socket error no data\n");
 				continue;
 			}
-			pTracking->parseSensorData(data);
-			glm::vec4 vecAngl = pTracking->extractAngles();
-			if (pTracking->altitudeReady && pTracking->azthmusReady) {
-				glm::vec4 vecDist(2.5, 3, 4, 0x00);
+
+			if (data[1] == 'x') {
+				vecBeta = pTracking->parseSensorDataSweep(data);
+				altitudeReady = true;
+			}
+			else if (data[1] == 'y') {
+				vecTheta = pTracking->parseSensorDataSweep(data);
+				azthmusReady = true;
+			}
+
+			if (altitudeReady && azthmusReady) {
+
+				glm::vec4 vecAngl = pTracking->extractAngles(vecBeta, vecTheta);
 				glm::vec4 vecX = pTracking->NewtonsNewMethod(vecDist, vecAngl);
-				glm::vec4 vecBeta(pTracking->m_B1, pTracking->m_B2, pTracking->m_B3, 0x00);
-				glm::vec4 vecTheta(pTracking->m_theta1, pTracking->m_theta2, pTracking->m_theta3, 0x00);
 				pTracking->updatePosition(vecX, vecBeta, vecTheta);
+				altitudeReady = false;
+				azthmusReady = false;
 			}
 		}
 		return 0;
@@ -164,85 +151,49 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
 
     void parseSensorData(char *data)
     {
-        if (data[1] == 'x')
-            parseSensorDataX(data);
-        else if (data[1] == 'y')
-            parseSensorDataY(data);
+ 
     }
 #define NUM_WIDTH 9
 #define NUM_POS_1 3
 #define NUM_POS_2 13
 #define NUM_POS_3 23
 
-    void parseSensorDataX(char *data)
+    glm::vec4  parseSensorDataSweep(char *data)
     {
+		glm::vec4 vecAngl;
         float tempB1, tempB2, tempB3;
         char szFloatNum[16]={0};
         
 		memcpy(szFloatNum, data+NUM_POS_1, NUM_WIDTH);
-        m_RawB1 = atof(szFloatNum);
-		tempB1 = m_RawB1 / period * 360; // (float.Parse(splitArray[1]) / period) * 360;
+		vecAngl[0] = atof(szFloatNum) / period * 360; // (float.Parse(splitArray[1]) / period) * 360;
        
 		memcpy(szFloatNum, data+NUM_POS_2, NUM_WIDTH);
-		m_RawB2 = atof(szFloatNum);
-        tempB2 =  m_RawB2 / period * 360;
+        vecAngl[1] =  atof(szFloatNum) / period * 360;
         
 		memcpy(szFloatNum, data+NUM_POS_3, NUM_WIDTH);
-		m_RawB3 = atof(szFloatNum);
-        tempB3 = m_RawB3 / period * 360;
-		/*
-        if (tempB1 > 180 || tempB2 > 180 || tempB3 > 180) {
-            //printf("ERROR: TRACKING LOST\n");
-            //print(splitArray[0] + splitArray[1] + "" + splitArray[2] + splitArray[3]);
-            return;
-        } 
-		else 
-		*/
-		{
-            altitudeReady = true;
-            //print("M_B1: " + tempB1 + " M_B2: " + tempB2 + "M_B3: " + tempB3);
-            m_B1 = glm::radians(tempB1);//tempB1 * Mathf.Deg2Rad;
-            m_B2 = glm::radians(tempB2);//tempB2 * Mathf.Deg2Rad;
-            m_B3 = glm::radians(tempB3);;//tempB3 * Mathf.Deg2Rad;
-        }
+        vecAngl[2] = atof(szFloatNum) / period * 360;
+
+        //print("M_B1: " + tempB1 + " M_B2: " + tempB2 + "M_B3: " + tempB3);
+        vecAngl[0] = glm::radians(vecAngl[0]);//tempB1 * Mathf.Deg2Rad;
+        vecAngl[1] = glm::radians(vecAngl[1]);//tempB2 * Mathf.Deg2Rad;
+        vecAngl[2] = glm::radians(vecAngl[2]);;//tempB3 * Mathf.Deg2Rad;
+		return vecAngl;
     }
 
-    void parseSensorDataY(char *data)
-    {
-        float tempTheta1, tempTheta2, tempTheta3;
-        char szFloatNum[10]={0};
-        memcpy(szFloatNum, data+NUM_POS_1, NUM_WIDTH);
-		m_Rawtheta1 = atof(szFloatNum);
-        tempTheta1 = m_Rawtheta1 / period * 360;
-        memcpy(szFloatNum, data+NUM_POS_2, NUM_WIDTH);
-		m_Rawtheta2 = atof(szFloatNum);
-        tempTheta2 = m_Rawtheta2 / period * 360;
-        memcpy(szFloatNum, data+NUM_POS_3, NUM_WIDTH);
-		m_Rawtheta3 = atof(szFloatNum);
-        tempTheta3 = m_Rawtheta3 / period * 360;;
-		/*
-        if (tempTheta1 > 180 || tempTheta2 > 180 || tempTheta3 > 180) {
-            //print("ERROR: TRACKING LOST"); print(splitArray[0] + splitArray[1] + "" + splitArray[2] + splitArray[3]);
-            return;
-        } 
-		else 
-		*/
-		{
-            azthmusReady = true;
-            //print("M_Theta1: " + tempTheta1 + " M_Theta2: " + tempTheta2 + "M_Theta3: " + tempTheta3);
-            m_theta1 = glm::radians(tempTheta1);// * Mathf.Deg2Rad;
-            m_theta2 = glm::radians(tempTheta2);// * Mathf.Deg2Rad;
-            m_theta3 = glm::radians(tempTheta3);// * Mathf.Deg2Rad;
-        }
-    }
-
-    glm::vec4 extractAngles()
+    glm::vec4 extractAngles(glm::vec4 vecBeta, glm::vec4 vecTheta)
     {
 		glm::vec4 vecAngl;
-        vecAngl[0] = (glm::sin(m_B1) * glm::cos(m_theta1) * glm::sin(m_B2) * glm::cos(m_theta2) + (glm::sin(m_B1) * glm::sin(m_theta1) * glm::sin(m_B2) * glm::sin(m_theta2) + glm::cos(m_B1) * glm::cos(m_B2)));
-        vecAngl[1] = (glm::sin(m_B2) * glm::cos(m_theta2) * glm::sin(m_B3) * glm::cos(m_theta3) + (glm::sin(m_B2) * glm::sin(m_theta2) * glm::sin(m_B3) * glm::sin(m_theta3) + glm::cos(m_B2) * glm::cos(m_B3)));
-        vecAngl[2] = (glm::sin(m_B1) * glm::cos(m_theta1) * glm::sin(m_B3) * glm::cos(m_theta3) + (glm::sin(m_B1) * glm::sin(m_theta1) * glm::sin(m_B3) * glm::sin(m_theta3) + glm::cos(m_B1) * glm::cos(m_B3)));
-        anglesReady = true;
+		float B1 = vecBeta[0];
+		float B2 = vecBeta[1];
+		float B3 = vecBeta[2];
+
+		float theta1 = vecTheta[0];
+		float theta2 = vecTheta[1];
+		float theta3 = vecTheta[2];
+
+        vecAngl[0] = (glm::sin(B1) * glm::cos(theta1) * glm::sin(B2) * glm::cos(theta2) + (glm::sin(B1) * glm::sin(theta1) * glm::sin(B2) * glm::sin(theta2) + glm::cos(B1) * glm::cos(B2)));
+        vecAngl[1] = (glm::sin(B2) * glm::cos(theta2) * glm::sin(B3) * glm::cos(theta3) + (glm::sin(B2) * glm::sin(theta2) * glm::sin(B3) * glm::sin(theta3) + glm::cos(B2) * glm::cos(B3)));
+        vecAngl[2] = (glm::sin(B1) * glm::cos(theta1) * glm::sin(B3) * glm::cos(theta3) + (glm::sin(B1) * glm::sin(theta1) * glm::sin(B3) * glm::sin(theta3) + glm::cos(B1) * glm::cos(B3)));
 		return vecAngl;
     }
 
@@ -291,42 +242,9 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
 		float cos13 = vecAngl[2];
 
 		glm::vec4 vecB(0.0f);// = Matrix4x4.identity;
-		    vecB[0] = (glm::pow(ra, 2) + glm::pow(rb, 2) - (2 * ra * rb * cos12) - glm::pow(m_distAB, 2));
-            vecB[1] = (glm::pow(rb, 2) + glm::pow(rc, 2) - (2 * rb * rc * cos23) - glm::pow(m_distBC, 2));
-            vecB[2] = (glm::pow(ra, 2) + glm::pow(rc, 2) - (2 * ra * rc * cos13) - glm::pow(m_distAC, 2));
-
-			if(0)
-			{
-				float p1_RA, p1_RB, p1_RC; float p2_RA, p2_RB, p2_RC; 
-				float p3_RA, p3_RB, p3_RC; 
-				p1_RA = ((2 * ra) - (2 * rb * m_cos12)); 
-				p1_RB = ((2 * rb) - (2 * ra * m_cos12)); 
-				p1_RC = 0; 
-				p2_RA = 0; 
-				p2_RB = ((2 * rb) - (2 * rc * m_cos23)); 
-				p2_RC = ((2 * rc) - (2 * rb * m_cos23)); 
-				p3_RA = ((2 * ra) - (2 * rc * m_cos13)); 
-				p3_RB = 0; 
-				p3_RC = ((2 * rc) - (2 * ra * m_cos13));
-				float sm1_const, sm2_const, sm3_const; 
-				float sm1_RA, sm1_RB, sm1_RC; sm1_RA = p1_RA; 
-				sm1_RB = p1_RB; 
-				sm1_RC = p1_RC; 
-				sm1_const = (-ra * p1_RA) + (-rb * p1_RB) + (-rc * p1_RC);
-				float sm2_RA, sm2_RB, sm2_RC; 
-				sm2_RA = p2_RA; sm2_RB = p2_RB; 
-				sm2_RC = p2_RC; sm2_const = (-ra * p2_RA) + (-rb * p2_RB) + (-rc * p2_RC);
-				float sm3_RA, sm3_RB, sm3_RC; 
-				sm3_RA = p3_RA; sm3_RB = p3_RB; 
-				sm3_RC = p3_RC; 
-				sm3_const = (-ra * p3_RA) + (-rb * p3_RB) + (-rc * p3_RC);
-				vecB[0] -= sm1_const;
-				vecB[1] -= sm2_const;
-				vecB[2] -= sm3_const;
-			}
-
-
-
+		vecB[0] = (glm::pow(ra, 2) + glm::pow(rb, 2) - (2 * ra * rb * cos12) - glm::pow(m_distAB, 2));
+        vecB[1] = (glm::pow(rb, 2) + glm::pow(rc, 2) - (2 * rb * rc * cos23) - glm::pow(m_distBC, 2));
+        vecB[2] = (glm::pow(ra, 2) + glm::pow(rc, 2) - (2 * ra * rc * cos13) - glm::pow(m_distAC, 2));
 
 		return vecB;
 	}
@@ -357,18 +275,6 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
 			}
         }
 		return vecX;
-/*
-		m_RA = vecTmp[0]; 
-		m_RB = vecTmp[1]; 
-		m_RC = vecTmp[2];
-        if (firstPosition == false) {
-            firstPosition = true;
-            A_offsetX = glm::abs(m_RA) * glm::sin(m_B1) * glm::cos(m_theta1) - startPos.x;
-            A_offsetY = glm::abs(m_RA) * glm::sin(m_B1) * glm::sin(m_theta1) - startPos.y;
-            A_offsetZ = glm::abs(m_RA) * glm::sin(m_B1) - startPos.z;
-            //print("OFFSETX: " + A_offsetX + " OFFSETY: " + A_offsetY + "OFFSETZ: " + A_offsetZ);
-        }
-		*/
     }
 
  
@@ -384,11 +290,10 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
         float x = glm::abs(ra) * glm::sin(b1) * glm::cos(t1);
         float y = glm::abs(ra) * glm::sin(b1) * glm::sin(t1);
         float z = glm::abs(ra) * glm::cos(b1);
-        newPos = glm::vec3(-(x - A_offsetX), -(z - A_offsetZ), -(y - A_offsetY));
+        newPos = glm::vec3(x, y, z);
 		if(count++ % 60 == 0) {
 			printf("Pos:x=%3.6f y=%3.6f z=%3.6f RA=%3.6f RB=%3.6f RC=%3.6f m_B1=%3.6f m_theta1=%3.6f\n", x,y,z,ra,rb,rc, b1, t1);
 		}
-		clearPosState();
     }
 
     // Update is called once per frame
@@ -396,8 +301,59 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
     {
 
     }
+	void test()
+	{
+		glm::vec4 vecDist(4, 4, 4, 0x00);
+		glm::vec4 vecAngl(0.6, 0.6, 0.6, 0x00);
+		glm::vec4 vecX = NewtonsNewMethod(vecDist,vecAngl);
+		
+	}
 };
 
+CTracking *g_pTracking = NULL;
+#if defined(WIN32)
+extern "C" {
+	VRTRACKPLUGIN_API int startTrack()
+	{
+		CTracking *tracking = new CTracking();
+	#ifdef WIN32
+		int iResult;
+		WSADATA wsaData;
+		iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
+		if (iResult != 0) {
+			printf("WSAStartup failed: %d\n", iResult);
+			return -1;
+		}
+	#endif
+		int res = tracking->Start();
+		g_pTracking = tracking;
+		return res;
+	}
+	VRTRACKPLUGIN_API void stopTrack()
+	{
+		if(g_pTracking) {
+			g_pTracking->m_fRun = 0;
+#ifdef WIN32
+			closesocket(g_pTracking->sockfd);
+			WaitForSingleObject(g_pTracking->hThread,1000);
+#else // ANDROID
+			close(g_pTracking->sockfd);
+			pthread_join(&g_pTracking->hThread);
+#endif
+		}
+	}
+	VRTRACKPLUGIN_API void getPosition(float pos[])
+	{
+		if(g_pTracking) {
+			pos[0]=g_pTracking->newPos[0];
+			pos[1]=g_pTracking->newPos[1];
+			pos[2]=g_pTracking->newPos[2];
+		}
+	}
+}
+#elif defined(ANDROID)
+
+#endif
 #ifdef WIN32
 int _tmain(int argc, _TCHAR* argv[])
 #else
@@ -415,12 +371,7 @@ int main(int argc, char* argv[])
 	}
 #endif
 	tracking->Start();
-	if(0)
-	{
-		glm::vec4 vecDist(4, 4, 4, 0x00);
-		glm::vec4 vecAngl(0.6, 0.6, 0.6, 0x00);
-		tracking->NewtonsNewMethod(vecDist,vecAngl);
-	}
+	//tracking->test();
 #ifdef WIN32
 	while(1) Sleep(1000);
 #endif
