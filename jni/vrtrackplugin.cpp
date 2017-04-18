@@ -3,6 +3,8 @@
 #include <glm/mat4x4.hpp>
 #include <glm/trigonometric.hpp>
 #include <glm/exponential.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/vector_angle.hpp>
 #include <math.h>
 #include <string>
 
@@ -29,8 +31,10 @@ public:
 	pthread_t hThread;
 #endif
 	int m_fRun;
-	glm::vec3 newPos;
-	glm::vec3 startPos;
+	glm::vec3 newPos[3];
+	glm::vec3 startPos[3];
+	glm::quat m_qatOrient;
+
 
 	int sockfd;
 	int remote_portno;
@@ -48,8 +52,10 @@ public:
 
     CTracking()
 	{
-		newPos = glm::vec3(0);
-		startPos = glm::vec3(0);
+		newPos[0] = glm::vec3(0);
+		startPos[0] = glm::vec3(0, 0, 0);
+		startPos[1] = glm::vec3(1.5, 1.667, 0);
+		startPos[2] = glm::vec3(3, 0, 0);
 
 		A_offsetX = 0.0;
 		A_offsetY = 0.0;
@@ -108,7 +114,7 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
 {
 		CTracking *pTracking = (CTracking*) pArg;
 		char data[256];
-		glm::vec4 vecDist(2.5, 3, 4, 0x00);
+		glm::vec4 vecDist(3, 3, 3, 0x00);
 		bool altitudeReady = false;
 		bool azthmusReady = false;
 		glm::vec4 vecTheta;
@@ -141,7 +147,8 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
 
 				glm::vec4 vecAngl = pTracking->extractAngles(vecBeta, vecTheta);
 				glm::vec4 vecX = pTracking->NewtonsNewMethod(vecDist, vecAngl);
-				pTracking->updatePosition(vecX, vecBeta, vecTheta);
+				pTracking->updatePositions(vecX, vecBeta, vecTheta);
+				pTracking->updateOrientation(pTracking->newPos, pTracking->startPos);
 				altitudeReady = false;
 				azthmusReady = false;
 			}
@@ -278,24 +285,38 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
     }
 
  
-    void updatePosition(glm::vec4 vecX, glm::vec4 vecBeta, glm::vec4 vecTheta)
+    void updatePositions(glm::vec4 vecX, glm::vec4 vecBeta, glm::vec4 vecTheta)
     {
 		static int count = 0;
-		float ra = vecX[0]; 
-		float rb = vecX[1]; 
-		float rc = vecX[2];
-		float b1 = vecBeta[0];
-		float t1 = vecTheta[0];
-
-        float x = glm::abs(ra) * glm::sin(b1) * glm::cos(t1);
-        float y = glm::abs(ra) * glm::sin(b1) * glm::sin(t1);
-        float z = glm::abs(ra) * glm::cos(b1);
-        newPos = glm::vec3(x, y, z);
-		if(count++ % 60 == 0) {
-			printf("Pos:x=%3.6f y=%3.6f z=%3.6f RA=%3.6f RB=%3.6f RC=%3.6f m_B1=%3.6f m_theta1=%3.6f\n", x,y,z,ra,rb,rc, b1, t1);
+		for (int i=0; i < 3; i++) {
+			float x = glm::abs(vecX[i]) * glm::sin(vecBeta[i]) * glm::cos(vecTheta[i]);
+			float y = glm::abs(vecX[i]) * glm::sin(vecBeta[i]) * glm::sin(vecTheta[i]);
+			float z = glm::abs(vecX[i]) * glm::cos(vecBeta[i]);//* * glm::sin(vecTheta[i]);*///Verify
+			newPos[i] = glm::vec3(x, y, z);
+			if(count++ % 60 == 0) {
+				printf("Pos:x=%3.6f y=%3.6f z=%3.6f\n", x,y,z);
+			}
 		}
     }
 
+	void updateOrientation(glm::vec3 newPos[3], glm::vec3 startPos[3])
+    {
+		glm::vec3 s1 = startPos[0] - startPos[1];
+		glm::vec3 s2 = startPos[0] - startPos[2];
+		glm::vec3 sn = glm::normalize(glm::cross(s1, s2));
+
+		glm::vec3 t1 = newPos[0] - newPos[1];
+		glm::vec3 t2 = newPos[0] - newPos[2];
+		glm::vec3 tn = glm::normalize(glm::cross(t1, t2));
+
+
+		glm::quat q1(sn, tn);
+		glm::quat q2(q1*(s1-s2), t2-t1);
+		m_qatOrient = q2;
+		//rotX = glm::acos(n[2]);
+		//rotY = glm::atan(n[1]/n[0]);
+		//rotZ = 0;
+    }
     // Update is called once per frame
     void Update()
     {
@@ -345,12 +366,19 @@ extern "C" {
 	VRTRACKPLUGIN_API void getPosition(float pos[])
 	{
 		if(g_pTracking) {
-			pos[0]=g_pTracking->newPos[0];
-			pos[1]=g_pTracking->newPos[1];
-			pos[2]=g_pTracking->newPos[2];
+			pos[0]=g_pTracking->newPos[0][0];
+			pos[1]=g_pTracking->newPos[0][1];
+			pos[2]=g_pTracking->newPos[0][2];
+
+			pos[3]=g_pTracking->m_qatOrient.x;
+			pos[4]=g_pTracking->m_qatOrient.y;
+			pos[5]=g_pTracking->m_qatOrient.z;
+
+			pos[6]=g_pTracking->m_qatOrient.w;
 		}
 	}
 }
+
 #elif defined(ANDROID)
 
 #endif
