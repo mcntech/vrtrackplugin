@@ -53,9 +53,9 @@ public:
     CTracking()
 	{
 		newPos[0] = glm::vec3(0);
-		startPos[0] = glm::vec3(0, 0, 0);
-		startPos[1] = glm::vec3(1.5, 1.667, 0);
-		startPos[2] = glm::vec3(3, 0, 0);
+		startPos[0] = glm::vec3(3, 0, 0);
+		startPos[1] = glm::vec3(0, 0, 0);
+		startPos[2] = glm::vec3(1.5, -2.667, 0);
 
 		A_offsetX = 0.0;
 		A_offsetY = 0.0;
@@ -289,15 +289,48 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
     {
 		static int count = 0;
 		for (int i=0; i < 3; i++) {
-			float x = glm::abs(vecX[i]) * glm::sin(vecBeta[i]) * glm::cos(vecTheta[i]);
-			float y = glm::abs(vecX[i]) * glm::sin(vecBeta[i]) * glm::sin(vecTheta[i]);
-			float z = glm::abs(vecX[i]) * glm::cos(vecBeta[i]);//* * glm::sin(vecTheta[i]);*///Verify
+			float y = glm::abs(vecX[i]) * glm::sin(vecBeta[i]) * glm::cos(vecTheta[i]);
+			float z = glm::abs(vecX[i]) * glm::sin(vecBeta[i]) * glm::sin(vecTheta[i]);
+			float x = glm::abs(vecX[i]) * glm::cos(vecBeta[i]) /** glm::sin(vecTheta[i])*/;///Verify
 			newPos[i] = glm::vec3(x, y, z);
 			if(count++ % 60 == 0) {
 				printf("Pos:x=%3.6f y=%3.6f z=%3.6f\n", x,y,z);
 			}
 		}
     }
+
+	glm::quat RotationBetweenVectors(glm::vec3 start, glm::vec3 dest){
+		start = normalize(start);
+		dest = normalize(dest);
+
+		float cosTheta = dot(start, dest);
+		glm::vec3 rotationAxis;
+/*
+		if (cosTheta < -1 + 0.001f){
+			// special case when vectors in opposite directions:
+			// there is no "ideal" rotation axis
+			// So guess one; any will do as long as it's perpendicular to start
+			rotationAxis = glm::cross(glm::vec3(0.0f, 0.0f, 1.0f), start);
+			if (glm::length2(rotationAxis) < 0.01 ) // bad luck, they were parallel, try again!
+				rotationAxis = glm::cross(glm::vec3(1.0f, 0.0f, 0.0f), start);
+
+			rotationAxis = normalize(rotationAxis);
+			return glm::angleAxis(180.0f, rotationAxis);
+		}
+*/
+		rotationAxis = glm::cross(start, dest);
+
+		float s = sqrt( (1+cosTheta)*2 );
+		float invs = 1 / s;
+
+		return glm::quat(
+			s * 0.5f, 
+			rotationAxis.x * invs,
+			rotationAxis.y * invs,
+			rotationAxis.z * invs
+		);
+
+	}
 
 	void updateOrientation(glm::vec3 newPos[3], glm::vec3 startPos[3])
     {
@@ -310,12 +343,32 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
 		glm::vec3 tn = glm::normalize(glm::cross(t1, t2));
 
 
-		glm::quat q1(sn, tn);
-		glm::quat q2(q1*(s1-s2), t2-t1);
-		m_qatOrient = q2;
+		//glm::quat q1(sn, tn);
+		//glm::quat q2(q1*(s1-s2), t1-t2);
+		//m_qatOrient = q2;
 		//rotX = glm::acos(n[2]);
 		//rotY = glm::atan(n[1]/n[0]);
 		//rotZ = 0;
+
+
+		/*
+		Source=(s1,s2,s3)
+
+		Target=(t1,t2,t3)
+
+		NormSource = (s1 - s2)cross(s1 - s3)
+
+		NormTarget = (t1 - t2)cross(t1 - t3)
+
+		Quat1 = getRotationTo (NormSource,NormTarget)
+
+		Quat2 = getRotationTo ( Quat1 * (s1 - s2),(t2 - t1) );
+
+		QuatFinal = Quat2 * Quat1
+		*/
+		glm::quat qat1 = RotationBetweenVectors(sn,tn);
+		glm::quat qat2 = RotationBetweenVectors(qat1 * (s1 - s2),(t2 - t1));
+		m_qatOrient = qat2 * qat1;
     }
     // Update is called once per frame
     void Update()
