@@ -53,9 +53,9 @@ public:
     CTracking()
 	{
 		newPos[0] = glm::vec3(0);
-		startPos[0] = glm::vec3(3, 0, 0);
+		startPos[0] = glm::vec3(8, 0, 0);
 		startPos[1] = glm::vec3(0, 0, 0);
-		startPos[2] = glm::vec3(1.5, -2.667, 0);
+		startPos[2] = glm::vec3(4, -6.93, 0);
 
 		A_offsetX = 0.0;
 		A_offsetY = 0.0;
@@ -106,6 +106,14 @@ public:
     	return bytesRecvd;
     }
 
+	 glm::vec4 getDistances() 
+	 {
+		 glm::vec4 dist;
+		 dist[0] = glm::length(startPos[1] - startPos[0]);
+		 dist[1] = glm::length(startPos[2] - startPos[1]);
+		 dist[2] = glm::length(startPos[2] - startPos[0]);
+		 return dist; 
+	 }
 #ifdef WIN32
 static DWORD WINAPI ReceiveData( LPVOID pArg )
 #else
@@ -114,7 +122,8 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
 {
 		CTracking *pTracking = (CTracking*) pArg;
 		char data[256];
-		glm::vec4 vecDist(3, 3, 3, 0x00);
+		
+		glm::vec4 vecDist = pTracking->getDistances();
 		bool altitudeReady = false;
 		bool azthmusReady = false;
 		glm::vec4 vecTheta;
@@ -367,7 +376,7 @@ static DWORD WINAPI ReceiveData( LPVOID pArg )
 		QuatFinal = Quat2 * Quat1
 		*/
 		glm::quat qat1 = RotationBetweenVectors(sn,tn);
-		glm::quat qat2 = RotationBetweenVectors(qat1 * (s1 - s2),(t2 - t1));
+		glm::quat qat2 = RotationBetweenVectors(qat1 * (s1 - s2),(t1 - t2));
 		m_qatOrient = qat2 * qat1;
     }
     // Update is called once per frame
